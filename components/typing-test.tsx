@@ -17,12 +17,12 @@ export function TypingTest() {
   const [selectedDifficulty, setSelectedDifficulty] = useState<"easy" | "medium" | "hard">("easy")
   const [testMode, setTestMode] = useState<"time" | "words">("time")
   const [duration, setDuration] = useState<15 | 30 | 60 | 120>(60)
-  const [wordCount, setWordCount] = useState<10 | 25 | 50 | 100>(25)
+  const [wordCount, setWordCount] = useState<10 | 25 | 50 | 100>(100)
   const [currentText, setCurrentText] = useState("")
   const [userInput, setUserInput] = useState("")
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isActive, setIsActive] = useState(false)
-  const [timeLeft, setTimeLeft] = useState(duration)
+  const [timeLeft, setTimeLeft] = useState<number>(duration)
   const [startTime, setStartTime] = useState<number | null>(null)
   const [stats, setStats] = useState<{
     wpm: number
@@ -45,7 +45,7 @@ export function TypingTest() {
   const [saveStatus, setSaveStatus] = useState<string>("")
 
   const inputRef = useRef<HTMLInputElement>(null)
-  const intervalRef = useRef<NodeJS.Timeout>()
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const { user } = useAuth()
 
@@ -97,13 +97,185 @@ export function TypingTest() {
     setTimeout(() => setSaveStatus(""), 3000)
   }
 
-  const generateText = useCallback(() => {
+  const generateText = useCallback(async () => {
+  try {
+    // For words mode, you might want to keep the existing logic or modify as needed
     if (testMode === "words") {
+      // Option 1: Use existing TextGenerator for words mode
+      return TextGenerator.generateCommonWords(wordCount)
+      
+      // Option 2: Use external API for words mode too (uncomment if preferred)
+      /*
+      const estimatedSentences = Math.max(3, Math.ceil(wordCount / 10))
+      const response = await fetch(`/api/typing-tests?action=generate-text&sentences=${estimatedSentences}`)
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch generated text')
+      }
+      
+      const data = await response.json()
+      
+      if (data.success && data.text) {
+        // Trim to approximately the requested word count
+        const words = data.text.split(' ')
+        return words.slice(0, wordCount).join(' ')
+      } else {
+        throw new Error('Invalid response from text generator')
+      }
+      */
+    } else {
+      // For time-based tests, calculate approximate sentences needed
+      // Formula: duration in seconds / 6 (assuming 6 seconds per sentence on average)
+      // With min 3 sentences and max 25 sentences
+      const estimatedSentences = Math.max(3, Math.min(Math.ceil(duration / 6), 25))
+      
+      console.log(`Fetching ${estimatedSentences} sentences for ${duration}s test`)
+      
+      // Fetch text from the GraphQL generator
+      const response = await fetch(
+        `/api/typing-tests?action=generate-text&sentences=${estimatedSentences}`,
+        {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          },
+        }
+      )
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch generated text: ${response.status} ${response.statusText}`)
+      }
+      
+      const data = await response.json()
+      
+      if (data.success && data.text) {
+        console.log(`Generated text with ${data.text.split(' ').length} words`)
+        return data.text
+      } else {
+        throw new Error('Invalid response from text generator')
+      }
+    }
+  } catch (error) {
+    console.error('Error generating text:', error)
+    
+    // Fallback to existing text generator based on test mode
+    if (testMode === "words") {
+      console.log('Falling back to TextGenerator for words mode')
       return TextGenerator.generateCommonWords(wordCount)
     } else {
+      console.log('Falling back to TextGenerator for time mode')
+      // Use existing text generator with current settings
       return TextGenerator.getRandomText(selectedCategory, selectedDifficulty)
     }
-  }, [testMode, wordCount, selectedCategory, selectedDifficulty])
+  }
+}, [testMode, wordCount, selectedCategory, selectedDifficulty, duration])
+
+// Updated resetTest function to handle async text generation
+const resetTest = useCallback(async () => {
+  try {
+    console.log('Resetting test and generating new text...')
+    
+    // Show loading state (optional)
+    setCurrentText("Loading new text...")
+    
+    const newText = await generateText()
+    
+    console.log('New text generated:', newText.substring(0, 100) + '...')
+    
+    setCurrentText(newText)
+    setUserInput("")
+    setCurrentIndex(0)
+    setIsActive(false)
+    setTimeLeft(duration)
+    setStartTime(null)
+    setIsFinished(false)
+    setErrors([])
+    setShowConfetti(false)
+    setSaveStatus("")
+    setStats({
+      wpm: 0,
+      accuracy: 100,
+      correctChars: 0,
+      incorrectChars: 0,
+      totalChars: 0,
+      timeElapsed: 0,
+    })
+    
+    // Focus input after a short delay to ensure everything is reset
+    setTimeout(() => {
+      inputRef.current?.focus()
+    }, 100)
+    
+  } catch (error) {
+    console.error('Error in resetTest:', error)
+    
+    // Final fallback - use a simple default text
+    const fallbackText = "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump!"
+    
+    setCurrentText(fallbackText)
+    setUserInput("")
+    setCurrentIndex(0)
+    setIsActive(false)
+    setTimeLeft(duration)
+    setStartTime(null)
+    setIsFinished(false)
+    setErrors([])
+    setShowConfetti(false)
+    setSaveStatus("")
+    setStats({
+      wpm: 0,
+      accuracy: 100,
+      correctChars: 0,
+      incorrectChars: 0,
+      totalChars: 0,
+      timeElapsed: 0,
+    })
+    
+    setTimeout(() => {
+      inputRef.current?.focus()
+    }, 100)
+  }
+}, [duration, generateText])
+
+// Initialize text on component mount
+useEffect(() => {
+  resetTest()
+}, []) // Empty dependency array for initial load only
+
+// Handle settings changes
+useEffect(() => {
+  // Only reset if we already have text loaded (to avoid double loading on mount)
+  if (currentText && currentText !== "Loading new text...") {
+    console.log('Settings changed, generating new text...')
+    resetTest()
+  }
+}, [testMode, duration, wordCount, selectedCategory, selectedDifficulty])
+
+// Additional helper function to generate new text without full reset (optional)
+const generateNewText = useCallback(async () => {
+  try {
+    console.log('Generating new text without full reset...')
+    const newText = await generateText()
+    setCurrentText(newText)
+    setUserInput("")
+    setCurrentIndex(0)
+    setErrors([])
+    
+    // Reset stats but keep test mode and settings
+    setStats({
+      wpm: 0,
+      accuracy: 100,
+      correctChars: 0,
+      incorrectChars: 0,
+      totalChars: 0,
+      timeElapsed: 0,
+    })
+    
+    inputRef.current?.focus()
+  } catch (error) {
+    console.error('Error generating new text:', error)
+  }
+}, [generateText])
 
   const calculateStats = useCallback(() => {
     if (!startTime) return stats
@@ -129,28 +301,6 @@ export function TypingTest() {
       timeElapsed: timeElapsedSeconds,
     }
   }, [userInput, currentText, startTime, stats])
-
-  const resetTest = useCallback(() => {
-    setCurrentText(generateText())
-    setUserInput("")
-    setCurrentIndex(0)
-    setIsActive(false)
-    setTimeLeft(duration)
-    setStartTime(null)
-    setIsFinished(false)
-    setErrors([])
-    setShowConfetti(false)
-    setSaveStatus("")
-    setStats({
-      wpm: 0,
-      accuracy: 100,
-      correctChars: 0,
-      incorrectChars: 0,
-      totalChars: 0,
-      timeElapsed: 0,
-    })
-    inputRef.current?.focus()
-  }, [duration, generateText])
 
   // Initialize text on component mount and when settings change
   useEffect(() => {
@@ -179,10 +329,16 @@ export function TypingTest() {
         setStats(calculateStats())
       }, 100)
     } else {
-      clearInterval(intervalRef.current)
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
     }
 
-    return () => clearInterval(intervalRef.current)
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+    }
   }, [isActive, isFinished, startTime, testMode, duration, calculateStats])
 
   // Check if word-based test is complete
@@ -592,8 +748,8 @@ export function TypingTest() {
                     Try Again
                   </Button>
                   <Button
-                    onClick={() => {
-                      setCurrentText(generateText())
+                    onClick={async () => {
+                      setCurrentText(await generateText())
                       setUserInput("")
                       setCurrentIndex(0)
                       setIsActive(false)

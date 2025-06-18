@@ -1,6 +1,69 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase-server"
 
+// Type definitions for better type safety
+interface TypingTestData {
+  wpm: number
+  accuracy: number
+  duration?: number
+  errors?: number
+  correctChars?: number
+  totalChars?: number
+  testMode?: string
+  textContent?: string
+}
+
+interface Achievement {
+  achievement_type: string
+  achievement_name: string
+  description: string
+  icon: string
+}
+
+interface GraphGeneratorResponse {
+  paragraph: string
+  word_count: number
+  sentences: number
+  error?: string
+}
+
+// Function to fetch text from GraphQL generator
+async function fetchTextFromGenerator(sentences: number = 10): Promise<string> {
+  try {
+    const response = await fetch(
+      `https://paragraphgenerator.up.railway.app/generate?sentences=${sentences}`,
+      {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        // Add timeout to prevent hanging requests
+        signal: AbortSignal.timeout(10000), // 10 second timeout
+      }
+    )
+
+    if (!response.ok) {
+      throw new Error(`GraphQL generator API returned ${response.status}: ${response.statusText}`)
+    }
+
+    const data: GraphGeneratorResponse = await response.json()
+    
+    // Handle the actual response format
+    if (data.paragraph) {
+      return data.paragraph
+    } else if (data.error) {
+      throw new Error(data.error)
+    } else {
+      throw new Error('Invalid response format from GraphQL generator')
+    }
+  } catch (error) {
+    console.error('Error fetching from GraphQL generator:', error)
+    // Return fallback text if external service fails
+    return "The quick brown fox jumps over the lazy dog. This is a fallback text when the external service is unavailable. Practice makes perfect, so keep typing to improve your speed and accuracy."
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient()
@@ -16,6 +79,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Authentication error" }, { status: 401 })
     }
 
+    const testData: TypingTestData = await request.json()
+
+    // Enhanced validation
+    if (!testData.wpm || testData.wpm < 0 || testData.wpm > 300) {
+      return NextResponse.json({ error: "Invalid WPM value" }, { status: 400 })
+    }
+
+    if (!testData.accuracy || testData.accuracy < 0 || testData.accuracy > 100) {
+      return NextResponse.json({ error: "Invalid accuracy value" }, { status: 400 })
+    }
+
     if (!session?.user) {
       console.log("No session found, returning mock response")
       // Return a mock success response for demo mode
@@ -25,13 +99,6 @@ export async function POST(request: NextRequest) {
           message: "Test completed (demo mode - not saved to database)",
         },
       })
-    }
-
-    const testData = await request.json()
-
-    // Validate required fields
-    if (!testData.wpm || !testData.accuracy) {
-      return NextResponse.json({ error: "Missing required test data" }, { status: 400 })
     }
 
     // Insert typing test
@@ -80,6 +147,22 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url)
+    const action = searchParams.get("action")
+    
+    // Handle text generation requests
+    if (action === "generate-text") {
+      const sentences = parseInt(searchParams.get("sentences") || "10")
+      const generatedText = await fetchTextFromGenerator(sentences)
+      
+      return NextResponse.json({ 
+        success: true,
+        text: generatedText,
+        source: "graphql-generator"
+      })
+    }
+
+    // Handle typing test history requests
     const supabase = await createServerClient()
 
     const {
@@ -103,7 +186,6 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const { searchParams } = new URL(request.url)
     const limit = Number.parseInt(searchParams.get("limit") || "10")
     const offset = Number.parseInt(searchParams.get("offset") || "0")
 
@@ -128,7 +210,7 @@ export async function GET(request: NextRequest) {
 
 async function checkAndUnlockAchievements(supabase: any, userId: string, wpm: number, accuracy: number) {
   try {
-    const achievements = []
+    const achievements: Achievement[] = []
 
     // Speed achievements
     if (wpm >= 100) {
