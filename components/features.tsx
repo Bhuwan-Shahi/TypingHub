@@ -71,7 +71,7 @@ const features = [
     icon: Globe,
     title: "Global Performance",
     description:
-      "Sub-100ms multiplayer latency worldwide. 99.9% uptime with global CDN for the fastest possible experience.",
+      "Sub-100ms multiplayer with latency worldwide. 99.9% uptime with global CDN for the fastest possible experience.",
     badge: "Performance",
     color: "text-red-500",
   },
